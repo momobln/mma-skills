@@ -1,162 +1,184 @@
+// Signup page: create a new account with email/password using Firebase Auth.
 
-// [AR] هذا الملف يعرّف صفحة "إنشاء حساب جديد" للمستخدم.
-// [EN] This file defines the "Sign Up" page for creating a new user account.
-
-import { useState } from "react";
-// [AR] نستخدم useState لإنشاء حالات محلية لقيم الحقول ورسالة الخطأ.
-// [EN] useState creates local state for form fields and the error message.
+import { useEffect, useState } from "react";
+// useState -> form fields and flags; useEffect -> optional redirect if already logged in.
 
 import { createUserWithEmailAndPassword } from "firebase/auth";
-// [AR] دالة من Firebase لإنشاء حساب جديد ببريد وكلمة مرور.
-// [EN] Firebase function to create a new account with email and password.
+// Firebase method to create a new user with email/password.
 
 import { auth } from "../services/firebase";
-// [AR] كائن المصادقة الذي جهّزناه في firebase.js.
-// [EN] The auth instance we initialized in firebase.js.
+// Shared Auth instance from your Firebase setup.
 
 import { useNavigate, Link } from "react-router-dom";
-// [AR] useNavigate للتنقل البرمجي بعد النجاح، و Link للانتقال بين الصفحات.
-// [EN] useNavigate for programmatic navigation after success, and Link for page links.
+// useNavigate -> programmatic navigation after signup; Link -> client-side link to Login.
 
 export default function Signup() {
-// [AR] نعرّف مكوّن صفحة التسجيل.
-// [EN] Define the Signup page component.
-
+  // Controlled inputs for the form.
   const [email, setEmail] = useState("");
-  // [AR] حالة لحفظ البريد الإلكتروني الذي سيدخله المستخدم.
-// [EN] State to store the user's email input.
-
   const [password, setPassword] = useState("");
-  // [AR] حالة لحفظ كلمة المرور.
-// [EN] State to store the password.
+  const [confirmPw, setConfirmPw] = useState("");
 
+  // UI flags: submitting (to disable button), show password visibility toggle.
+  const [submitting, setSubmitting] = useState(false);
+  const [showPw, setShowPw] = useState(false);
+
+  // Error message to show a friendly message to the user.
   const [error, setError] = useState("");
-  // [AR] حالة لعرض رسالة خطأ في حال فشل إنشاء الحساب.
-// [EN] State to display an error message if signup fails.
 
+
+  // Router
   const navigate = useNavigate();
-  // [AR] هوك للتنقل إلى صفحة أخرى (مثل /app) بعد نجاح التسجيل.
-// [EN] Hook to navigate to another route (like /app) after successful signup.
 
+  // If user is already logged in, send them to the app (nice UX).
+  useEffect(() => {
+    if (auth.currentUser) {
+      navigate("/app", { replace: true });
+    }
+  }, [navigate]);
+
+  // Map Firebase error codes to friendlier messages.
+  function mapAuthError(err) {
+    const code = err?.code || "";
+    switch (code) {
+      case "auth/email-already-in-use":
+        return "This email is already in use.";
+      case "auth/invalid-email":
+        return "Invalid email address.";
+      case "auth/weak-password":
+        return "Password is too weak.";
+      case "auth/operation-not-allowed":
+        return "Email/password sign-up is not enabled.";
+      default:
+        return err?.message || "Signup failed. Please try again.";
+    }
+  }
+
+  // Handle the signup form submit.
   const handleSignup = async (e) => {
-  // [AR] دالة تُنفَّذ عند إرسال النموذج.
-// [EN] Function executed when the form is submitted.
+    e.preventDefault();          // Prevent page reload
+    setError("");                // Clear previous error
 
-    e.preventDefault();
-    // [AR] منع إعادة تحميل الصفحة الافتراضية للنموذج.
-// [EN] Prevent the form's default full-page reload.
+    // Trim inputs to avoid accidental spaces.
+    const emailTrim = email.trim();
+    const pwTrim = password.trim();
+    const confirmTrim = confirmPw.trim();
 
-    setError("");
-    // [AR] نفرّغ رسالة الخطأ قبل المحاولة.
-// [EN] Clear any previous error before trying.
+    // Basic validation on the client.
+    if (!emailTrim || !pwTrim || !confirmTrim) {
+      setError("Please fill out all fields.");
+      return;
+    }
+    if (pwTrim !== confirmTrim) {
+      setError("Passwords do not match.");
+      return;
+    }
+    if (pwTrim.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
 
     try {
-      await createUserWithEmailAndPassword(auth, email, password);
-      // [AR] نحاول إنشاء الحساب باستخدام Firebase بالبريد وكلمة المرور.
-// [EN] Try creating the account in Firebase using email and password.
+      setSubmitting(true); // Disable the submit button
 
-      navigate("/app");
-      // [AR] عند النجاح: ننتقل إلى لوحة التحكم (المحمية).
-// [EN] On success: navigate to the protected dashboard.
+      // Create the account with Firebase Auth.
+      await createUserWithEmailAndPassword(auth, emailTrim, pwTrim);
 
+      // On success, go to the protected app.
+      navigate("/app", { replace: true });
     } catch (err) {
-      setError(err.message);
-      // [AR] عند الفشل: نخزّن رسالة الخطأ لعرضها للمستخدم.
-// [EN] On failure: store the error message to show to the user.
+      setError(mapAuthError(err)); // Friendly message
+    } finally {
+      setSubmitting(false); // Re-enable submit button
     }
   };
 
   return (
-    // [AR] نعيد واجهة JSX لصفحة التسجيل.
-// [EN] Return the JSX for the signup page.
-
+    // Full-screen centered container with a light gray background.
     <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      {/* 
-        [AR] حاوية تغطّي الشاشة، تمركز المحتوى عموديًا وأفقيًا، بخلفية رمادية فاتحة.
-        [EN] Full-screen container, centered vertically and horizontally, with a light gray background.
-      */}
-
+      {/* Signup card */}
       <form
         onSubmit={handleSignup}
         className="bg-white p-6 rounded shadow-md w-80"
+        noValidate // We'll manage the validation manually.
       >
-        {/*
-          [AR] نموذج التسجيل:
-          - onSubmit: يستدعي handleSignup عند الضغط على زر التسجيل.
-          - className: خلفية بيضاء، حواف مستديرة، ظل، عرض مناسب للموبايل.
-          [EN] Signup form:
-          - onSubmit: calls handleSignup when the button is pressed.
-          - className: white background, rounded corners, shadow, mobile-friendly width.
-        */}
-
+        {/* Title */}
         <h1 className="text-xl font-bold mb-4">Sign Up</h1>
-        {/*
-          [AR] عنوان واضح للصفحة مع مسافة سفلية.
-          [EN] A clear page title with bottom margin.
-        */}
 
-        {error && <p className="text-red-500 text-sm">{error}</p>}
-        {/*
-          [AR] إن كانت هناك رسالة خطأ، نعرضها كنص أحمر صغير.
-          [EN] If there's an error message, display it as small red text.
-        */}
+        {/* Error banner */}
+        {error && (
+          <p className="text-red-600 text-sm mb-2" role="alert">
+            {error}
+          </p>
+        )}
 
-        {/* 
-          [AR] حقل البريد الإلكتروني:
-          - type="email": يتحقق من صيغة البريد.
-          - value/onChange: ربط الحقل بالحالة email.
-          - تنسيقات Tailwind لسهولة القراءة.
-          [EN] Email input:
-          - type="email": basic email validation.
-          - value/onChange: bind to the email state.
-          - Tailwind styles for readability.
-        */}
+        {/* Email input */}
+        <label className="block text-sm mb-1" htmlFor="email">
+          Email
+        </label>
         <input
+          id="email"
           type="email"
-          placeholder="Email"
-          className="border p-2 w-full mb-2"
+          placeholder="you@example.com"
+          className="border p-2 w-full mb-3 rounded"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
+          autoComplete="email"
+          required
         />
 
-        {/* 
-          [AR] حقل كلمة المرور:
-          - type="password": إخفاء الأحرف.
-          - value/onChange: ربط بالحالة password.
-          [EN] Password input:
-          - type="password": masks characters.
-          - value/onChange: bind to the password state.
-        */}
+        {/* Password input with show/hide */}
+        <label className="block text-sm mb-1" htmlFor="password">
+          Password
+        </label>
+        <div className="flex gap-2 mb-1">
+          <input
+            id="password"
+            type={showPw ? "text" : "password"}
+            placeholder="At least 8 characters"
+            className="border p-2 w-full rounded"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="new-password"
+            required
+          />
+          <button
+            type="button"
+            className="px-3 rounded border text-sm"
+            onClick={() => setShowPw((v) => !v)}
+            aria-pressed={showPw}
+          >
+            {showPw ? "Hide" : "Show"}
+          </button>
+        </div>
+
+        {/* Confirm password */}
+        <label className="block text-sm mb-1" htmlFor="confirm">
+          Confirm password
+        </label>
         <input
-          type="password"
-          placeholder="Password"
-          className="border p-2 w-full mb-2"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
+          id="confirm"
+          type={showPw ? "text" : "password"}
+          placeholder="Re-type your password"
+          className="border p-2 w-full mb-3 rounded"
+          value={confirmPw}
+          onChange={(e) => setConfirmPw(e.target.value)}
+          autoComplete="new-password"
+          required
         />
 
-        {/* 
-          [AR] زر إنشاء الحساب:
-          - type="submit": يفعّل onSubmit في <form>.
-          - ألوان/حجم مناسبين عبر Tailwind.
-          [EN] Submit button:
-          - type="submit": triggers the form's onSubmit.
-          - Styled with Tailwind for color/size.
-        */}
+        {/* Submit button */}
         <button
           type="submit"
-          className="w-full bg-green-500 text-white py-2 rounded"
+          disabled={submitting}
+          className="w-full bg-green-600 text-white py-2 rounded disabled:opacity-60"
         >
-          Sign Up
+          {submitting ? "Creating account..." : "Sign Up"}
         </button>
 
-        {/* 
-          [AR] سطر مساعد: عنده حساب؟ اذهب لصفحة تسجيل الدخول.
-          [EN] Helper text: already have an account? Go to Login.
-        */}
-        <p className="mt-2 text-sm">
+        {/* Link to Login */}
+        <p className="mt-3 text-sm">
           Already have an account?{" "}
-          <Link to="/login" className="text-blue-500 underline">
+          <Link to="/login" className="text-blue-600 underline">
             Login
           </Link>
         </p>

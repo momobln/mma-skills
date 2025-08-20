@@ -1,102 +1,140 @@
+// This page is shown only after login (protected by <ProtectedRoute/>).
+// It lets the user manage their MMA skills stored in Firestore.
 
-// [AR] هذه الصفحة تظهر فقط للمستخدم بعد تسجيل الدخول وتسمح له بإدارة مهارات MMA.
-// [EN] This page is only accessible after login and allows managing MMA skills.
+import { useEffect, useMemo, useState } from "react";
+// useState -> local state for form inputs and the skills array.
+// useEffect -> fetch on mount / subscribe to changes.
 
-import { useState, useEffect } from "react";
-// [AR] useState للحالات (inputs + skills list)، useEffect لجلب البيانات من Firestore.
-// [EN] useState for states (inputs + skills list), useEffect for fetching data from Firestore.
-
-import { collection, addDoc, getDocs, deleteDoc, doc } from "firebase/firestore";
-// [AR] دوال للتعامل مع Firestore (إضافة، جلب، حذف).
-// [EN] Firestore functions (add, fetch, delete).
+import {
+  collection,
+  addDoc,
+  deleteDoc,
+  doc,
+  query,
+  where,
+  onSnapshot,
+} from "firebase/firestore";
+// Firestore helpers: CRUD and realtime subscription.
 
 import { db, auth } from "../services/firebase";
-// [AR] استدعاء قاعدة البيانات (db) والمصادقة (auth).
-// [EN] Import database (db) and auth instance.
+// 'db' is your Firestore instance, 'auth' is Firebase Auth instance.
 
 import { signOut } from "firebase/auth";
-// [AR] لتسجيل الخروج.
-// [EN] For logging out.
+// To sign the user out.
 
 export default function Dashboard() {
+  // Controlled input for the skill name (text).
   const [skill, setSkill] = useState("");
-  // [AR] حالة لحفظ اسم المهارة المؤقت من input.
-  // [EN] State to hold skill name input.
 
+  // Controlled input for the skill level (e.g., Beginner/Intermediate/Advanced).
   const [level, setLevel] = useState("");
-  // [AR] حالة لحفظ مستوى المهارة من input.
-  // [EN] State to hold skill level input.
 
+  // Array of skills coming from Firestore.
   const [skills, setSkills] = useState([]);
-  // [AR] قائمة المهارات التي سنجلبها من Firestore.
-  // [EN] List of skills fetched from Firestore.
 
-  // [AR] مرجع لمجموعة skills داخل Firestore.
-  // [EN] Reference to "skills" collection in Firestore.
-  const skillsCollection = collection(db, "skills");
+  // Loading flags for UX.
+  const [loadingList, setLoadingList] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
 
-  // [AR] دالة لجلب المهارات من Firestore
-  // [EN] Function to fetch skills from Firestore
-  const fetchSkills = async () => {
-    const data = await getDocs(skillsCollection);
-    // [AR] getDocs تجلب كل المستندات داخل "skills".
-    // [EN] getDocs retrieves all documents inside "skills".
+  // Convenience: current user id (safe optional chaining in case something changes).
+  const uid = auth.currentUser?.uid;
 
-    setSkills(data.docs.map((doc) => ({ ...doc.data(), id: doc.id })));
-    // [AR] نحول المستندات إلى كائنات عادية + نضيف id (معرّف لكل وثيقة).
-    // [EN] Convert docs into plain objects + add id for each document.
-  };
+  // Reference to the "skills" collection (do not fetch yet).
+  const skillsCollection = useMemo(() => collection(db, "skills"), []);
 
-  // [AR] جلب المهارات عند فتح الصفحة.
-  // [EN] Fetch skills when the page loads.
+  // Build a query that only returns documents belonging to the current user.
+  // This prevents reading other users' skills.
+  const userSkillsQuery = useMemo(() => {
+    // If uid is missing (edge case), we still return a query; ProtectedRoute should guard this.
+    return query(skillsCollection, where("user", "==", uid || "__NO_UID__"));
+  }, [skillsCollection, uid]);
+
+  // Fetch or subscribe to skills on mount and whenever uid changes.
   useEffect(() => {
-    fetchSkills();
-  }, []);
+    // If there is no user (very edge case if route wasn't protected), bail out.
+    if (!uid) {
+      setSkills([]);
+      setLoadingList(false);
+      return;
+    }
 
-  // [AR] إضافة مهارة جديدة.
-  // [EN] Add new skill.
+    // Option A (realtime): use onSnapshot to instantly reflect adds/deletes.
+    const unsubscribe = onSnapshot(
+      userSkillsQuery,
+      (snapshot) => {
+        // Map snapshot docs to plain objects and include doc.id.
+        const items = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        setSkills(items);
+        setLoadingList(false);
+      },
+      (err) => {
+        console.error("Failed to subscribe to skills:", err);
+        setLoadingList(false);
+      }
+    );
+
+    // Cleanup subscription on unmount.
+    return () => unsubscribe();
+
+    // NOTE: If you prefer one-time fetch instead of realtime, use getDocs(userSkillsQuery) here.
+  }, [uid, userSkillsQuery]);
+
+  // Add a new skill document to Firestore.
   const addSkill = async (e) => {
-    e.preventDefault(); // منع إعادة تحميل الصفحة
-    if (!skill || !level) return;
+    e.preventDefault(); // Prevent form submit from reloading the page
 
-    await addDoc(skillsCollection, {
-      skill,
-      level,
-      user: auth.currentUser.uid, // ربط المهارة بالمستخدم الحالي
-    });
+    // Basic validation
+    if (!skill.trim() || !level.trim()) return;
 
-    setSkill("");
-    setLevel("");
-    fetchSkills(); // تحديث القائمة بعد الإضافة
+    // Extra guard: ensure we have a user id.
+    if (!uid) return;
+
+    try {
+      setSubmitting(true);
+      await addDoc(skillsCollection, {
+        skill: skill.trim(),         // normalize input
+        level: level.trim(),
+        user: uid,                   // link to the current user
+        createdAt: Date.now(),       // optional: for sorting later if needed
+      });
+
+      // Reset form fields
+      setSkill("");
+      setLevel("");
+    } catch (err) {
+      console.error("Failed to add skill:", err);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  // [AR] حذف مهارة.
-  // [EN] Delete skill.
+  // Delete a skill by document id.
   const deleteSkill = async (id) => {
-    const skillDoc = doc(db, "skills", id);
-    await deleteDoc(skillDoc);
-    fetchSkills(); // تحديث القائمة بعد الحذف
+    try {
+      await deleteDoc(doc(db, "skills", id));
+      // No need to manually refresh; onSnapshot will update the UI.
+    } catch (err) {
+      console.error("Failed to delete skill:", err);
+    }
   };
 
-  // [AR] تسجيل الخروج.
-  // [EN] Logout function.
+  // Log the user out and rely on your global auth flow to redirect.
   const handleLogout = async () => {
-    await signOut(auth);
+    try {
+      await signOut(auth);
+      // After sign-out, your ProtectedRoute should redirect to /login automatically.
+    } catch (err) {
+      console.error("Failed to sign out:", err);
+    }
   };
 
   return (
     <div className="p-6 max-w-md mx-auto">
-      {/* [AR] الحاوية الرئيسية بوسط الشاشة. 
-          [EN] Main centered container. */}
-
+      {/* Page title */}
       <h1 className="text-2xl font-bold mb-4">MMA Skills Dashboard</h1>
-      {/* [AR] عنوان الصفحة.
-          [EN] Page title. */}
 
+      {/* Add skill form */}
       <form onSubmit={addSkill} className="mb-4">
-        {/* [AR] نموذج لإضافة المهارة.
-            [EN] Form to add new skill. */}
-
         <input
           type="text"
           placeholder="Skill"
@@ -104,8 +142,6 @@ export default function Dashboard() {
           value={skill}
           onChange={(e) => setSkill(e.target.value)}
         />
-        {/* [AR] حقل إدخال اسم المهارة.
-            [EN] Input field for skill name. */}
 
         <input
           type="text"
@@ -114,45 +150,48 @@ export default function Dashboard() {
           value={level}
           onChange={(e) => setLevel(e.target.value)}
         />
-        {/* [AR] حقل إدخال مستوى المهارة.
-            [EN] Input field for skill level. */}
 
-        <button className="w-full bg-green-500 text-white py-2 rounded">
-          Add Skill
+        <button
+          disabled={submitting}
+          className="w-full bg-green-500 text-white py-2 rounded disabled:opacity-60"
+        >
+          {submitting ? "Adding..." : "Add Skill"}
         </button>
-        {/* [AR] زر لإضافة المهارة.
-            [EN] Button to add skill. */}
       </form>
 
-      <ul>
-        {/* [AR] قائمة عرض المهارات.
-            [EN] List of skills. */}
-        {skills.map((s) => (
-          <li
-            key={s.id}
-            className="flex justify-between items-center border-b py-2"
-          >
-            <span>
-              {s.skill} - {s.level}
-            </span>
-            <button
-              onClick={() => deleteSkill(s.id)}
-              className="bg-red-500 text-white px-2 py-1 rounded"
+      {/* Skills list */}
+      {loadingList ? (
+        <p className="text-sm text-gray-500">Loading your skills…</p>
+      ) : skills.length === 0 ? (
+        <p className="text-sm text-gray-500">No skills yet. Add your first one!</p>
+      ) : (
+        <ul>
+          {skills.map((s) => (
+            <li
+              key={s.id}
+              className="flex justify-between items-center border-b py-2"
             >
-              Delete
-            </button>
-          </li>
-        ))}
-      </ul>
+              <span>
+                {s.skill} — {s.level}
+              </span>
+              <button
+                onClick={() => deleteSkill(s.id)}
+                className="bg-red-500 text-white px-2 py-1 rounded"
+              >
+                Delete
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
 
+      {/* Logout */}
       <button
         onClick={handleLogout}
         className="mt-4 bg-gray-500 text-white w-full py-2 rounded"
       >
         Logout
       </button>
-      {/* [AR] زر تسجيل الخروج.
-          [EN] Logout button. */}
     </div>
   );
 }
